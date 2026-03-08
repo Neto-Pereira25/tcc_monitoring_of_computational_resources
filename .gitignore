@@ -1,3 +1,6 @@
+# Pasta com os dados gerados pela análise do agente
+data
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
