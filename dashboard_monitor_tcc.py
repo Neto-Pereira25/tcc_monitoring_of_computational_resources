@@ -1,40 +1,30 @@
 # -*- coding: utf-8 -*-
-"""
-Dashboard Streamlit para análise dos CSVs do agente (versão refatorada)
-- Lê CSVs do diretório selecionado
-- Faz parse de timestamp_utc e ordena
-- Exibe séries temporais (CPU/RAM/mem_available/SWAP e disco)
-- Calcula estatísticas (média, p50/p75/p95) por arquivo e por conjunto
-- Classifica hosts (pré/pós) usando regras do TCC: 
-  * subutilizado: p95_CPU < 30% e p95_RAM < 50%
-  * sobrecarregado: p95_CPU >= 80% ou p95_RAM >= 85%
-- Exporta sumários em CSV (download)
+"""Dashboard Streamlit (v2) – Consumo × Carga × Horas
 
-Como executar:
-    streamlit run dashboard_monitor_tcc.py
+Este dashboard complementa o TCC permitindo demonstrar, na prática:
+- correlação entre consumo e desempenho (carga efetiva)
+- relação horas de uso × consumo × desempenho
+- trade-off energia–desempenho
+
+Execução:
+  streamlit run dashboard_monitor_tcc_v2.py
 """
 
 import os
 import io
-import platform
 import datetime as dt
-import pandas as pd
 import numpy as np
+import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 # -----------------------------
 # Configuração da página
 # -----------------------------
-st.set_page_config(
-    page_title='Dashboard Monitoramento TCC',
-    page_icon=':bar_chart:',
-    layout='wide',
-    initial_sidebar_state='expanded'
-)
 
-st.title('📊 Dashboard de Monitoramento – TCC')
-st.write('Analise os CSVs gerados pelo agente de coleta (versão refatorada).')
+st.set_page_config(page_title='Dashboard – Consumo × Carga', page_icon=':bar_chart:', layout='wide')
+st.title('📊 Consumo × Carga × Horas (TCC)')
 
 # -----------------------------
 # Helpers
@@ -48,170 +38,153 @@ def load_csv(path: str) -> pd.DataFrame:
         df = df.sort_values('timestamp_utc').reset_index(drop=True)
     return df
 
-
-def list_csvs(root: str) -> list:
+def list_csvs(root: str):
     if not os.path.isdir(root):
         return []
     return [os.path.join(root, f) for f in os.listdir(root) if f.lower().endswith('.csv')]
 
-
-def compute_basic_stats(df: pd.DataFrame) -> pd.DataFrame:
-    cols_pct = [c for c in df.columns if c.lower() in ['cpu (%)', 'ram (%)', 'mem_available (%)', 'swap (%)']]
-    if not cols_pct:
-        return pd.DataFrame()
-    res = pd.DataFrame({
-        'mean': df[cols_pct].mean(),
-        'p50': df[cols_pct].quantile(0.50),
-        'p75': df[cols_pct].quantile(0.75),
-        'p95': df[cols_pct].quantile(0.95)
-    })
-    return res
-
-
-def classify_host(df: pd.DataFrame) -> str:
-    # Regras do TCC baseadas em p95 de CPU/RAM
-    if not set(['cpu (%)', 'ram (%)']).issubset(df.columns):
-        return 'indefinido'
-    p95_cpu = df['cpu (%)'].quantile(0.95)
-    p95_ram = df['ram (%)'].quantile(0.95)
-    if (p95_cpu < 30) and (p95_ram < 50):
-        return 'subutilizado'
-    if (p95_cpu >= 80) or (p95_ram >= 85):
-        return 'sobrecarregado'
-    return 'adequado'
-
-
-def summarize_file(path: str) -> dict:
-    df = load_csv(path)
-    label = os.path.basename(path)
+def summarize(df: pd.DataFrame, filename: str):
     host_id = df['host_id'].iloc[0] if 'host_id' in df.columns and not df.empty else 'desconhecido'
-    os_name = df['os'].iloc[0] if 'os' in df.columns and not df.empty else ''
-    os_rel  = df['os_release'].iloc[0] if 'os_release' in df.columns and not df.empty else ''
-    cls = classify_host(df) if not df.empty else 'indefinido'
-    stats = compute_basic_stats(df)
+    phase = df['phase'].iloc[0] if 'phase' in df.columns and not df.empty else ''
+
+    if 'timestamp_utc' in df.columns and df['timestamp_utc'].notna().any():
+        total_hours = (df['timestamp_utc'].max() - df['timestamp_utc'].min()).total_seconds() / 3600.0
+    elif 'interval_s' in df.columns:
+        total_hours = df['interval_s'].sum() / 3600.0
+    else:
+        total_hours = float('nan')
+
+    if 'active_flag' in df.columns and 'interval_s' in df.columns:
+        active_hours = df.loc[df['active_flag'] == 1, 'interval_s'].sum() / 3600.0
+    else:
+        active_hours = float('nan')
+
+    if 'energy_Wh_est' in df.columns:
+        energy_kWh = df['energy_Wh_est'].sum() / 1000.0
+    elif 'energy_kWh_cum' in df.columns and not df.empty:
+        energy_kWh = df['energy_kWh_cum'].max()
+    else:
+        energy_kWh = float('nan')
+
+    mean_load = df['load_effective'].mean() if 'load_effective' in df.columns else float('nan')
+    p95_load = df['load_effective'].quantile(0.95) if 'load_effective' in df.columns else float('nan')
+
     return {
-        'arquivo': label,
+        'arquivo': os.path.basename(filename),
         'host_id': host_id,
-        'os': os_name,
-        'os_release': os_rel,
-        'classificacao': cls,
-        'stats': stats,
+        'phase': phase,
+        'total_hours': total_hours,
+        'active_hours': active_hours,
+        'energy_kWh_est': energy_kWh,
+        'mean_load': mean_load,
+        'p95_load': p95_load,
         'df': df
     }
 
-
-def to_downloadable_csv(df: pd.DataFrame, filename: str, label: str):
+def download_df(df: pd.DataFrame, filename: str, label: str):
     buf = io.StringIO()
-    df.to_csv(buf, index=True)
-    st.download_button(label=label, data=buf.getvalue(), file_name=filename, mime='text/csv')
+    df.to_csv(buf, index=False)
+    st.download_button(label, buf.getvalue(), file_name=filename, mime='text/csv')
 
+def scatter_with_fit(x, y, xname, yname, title):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x2, y2 = x[mask], y[mask]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x2, y=y2, mode='markers', name='observações'))
+    if len(x2) >= 2:
+        m, b = np.polyfit(x2, y2, 1)
+        xs = np.linspace(x2.min(), x2.max(), 50)
+        ys = m*xs + b
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines', name='tendência (OLS)'))
+        fig.update_layout(title=f"{title} | inclinação={m:.4f}")
+    else:
+        fig.update_layout(title=title)
+    fig.update_layout(xaxis_title=xname, yaxis_title=yname)
+    return fig
 
 # -----------------------------
 # Sidebar – seleção de diretório/arquivos
 # -----------------------------
 
 st.sidebar.header('📁 Fonte de dados')
-root_default = os.path.join(os.path.abspath('.'), 'data')
-root = st.sidebar.text_input('Diretório com CSVs', value=root_default)
+root = st.sidebar.text_input('Diretório com CSVs', value=os.path.join(os.path.abspath('.'), 'data'))
 
-csvs = list_csvs(root)
-if not csvs:
-    st.warning('Nenhum CSV encontrado no diretório informado. Gere dados com o agente ou selecione outro caminho.')
+files = list_csvs(root)
+if not files:
+    st.warning('Nenhum CSV encontrado. Gere dados com o agente v2 ou ajuste o caminho.')
     st.stop()
 
-choices = st.sidebar.multiselect('Selecione os arquivos para análise', options=csvs, default=csvs[:min(5, len(csvs))])
-if not choices:
-    st.info('Selecione pelo menos um arquivo.')
+selected = st.sidebar.multiselect('Selecione arquivos', options=files, default=files[:min(10, len(files))])
+if not selected:
     st.stop()
 
 # -----------------------------
 # Carga dos arquivos
 # -----------------------------
 
-summaries = [summarize_file(p) for p in choices]
+summaries = [summarize(load_csv(f), f) for f in selected]
+summary_df = pd.DataFrame([{k:v for k,v in s.items() if k != 'df'} for s in summaries])
 
-# Tabela de cabeçalho (host, SO, classificação)
-head_rows = []
-for s in summaries:
-    head_rows.append({
-        'arquivo': s['arquivo'],
-        'host_id': s['host_id'],
-        'os': s['os'],
-        'os_release': s['os_release'],
-        'classificacao': s['classificacao']
-    })
-head_df = pd.DataFrame(head_rows)
-
-st.subheader('📄 Arquivos / Metadados')
-st.dataframe(head_df, use_container_width=True)
+st.subheader('📌 Sumário por arquivo')
+st.dataframe(summary_df, use_container_width=True)
+download_df(summary_df, 'sumario_consumo_carga.csv', '⬇️ Baixar sumário')
 
 # -----------------------------
-# Séries temporais combinadas
+# Correlações
 # -----------------------------
 
-st.subheader('⏱️ Séries Temporais (combinadas)')
+st.subheader('🔗 Correlações (por arquivo)')
+cols = ['energy_kWh_est','mean_load','p95_load','total_hours','active_hours']
+pear = summary_df[cols].corr(method='pearson')
+spear = summary_df[cols].corr(method='spearman')
 
-combined = pd.concat([s['df'].assign(__file=s['arquivo']) for s in summaries], ignore_index=True)
-
-if 'timestamp_utc' in combined.columns:
-    xcol = 'timestamp_utc'
-else:
-    combined = combined.reset_index().rename(columns={'index': 'amostra'})
-    xcol = 'amostra'
-
-cols_pct = [c for c in combined.columns if c.lower() in ['cpu (%)','ram (%)','mem_available (%)','swap (%)']]
-if cols_pct:
-    st.markdown('**CPU / RAM / Mem Available / SWAP**')
-    fig_pct = px.line(combined, x=xcol, y=cols_pct, color='__file', title='Percentuais (por arquivo)')
-    st.plotly_chart(fig_pct, use_container_width=True)
-
-cols_disk = [c for c in ['disk_read_Bps','disk_write_Bps','disk_avg_latency_ms'] if c in combined.columns]
-if cols_disk:
-    st.markdown('**Disco – Taxas e Latência**')
-    fig_dsk = px.line(combined, x=xcol, y=cols_disk, color='__file', title='Disco (B/s e ms/op)')
-    st.plotly_chart(fig_dsk, use_container_width=True)
+c1, c2 = st.columns(2)
+with c1:
+    st.markdown('**Pearson**')
+    st.plotly_chart(px.imshow(pear, text_auto=True, aspect='auto'), use_container_width=True)
+with c2:
+    st.markdown('**Spearman**')
+    st.plotly_chart(px.imshow(spear, text_auto=True, aspect='auto'), use_container_width=True)
 
 # -----------------------------
-# Estatísticas por arquivo (média, p50/p75/p95) + download
+# Dispersões
 # -----------------------------
 
-st.subheader('📈 Estatísticas por arquivo')
+st.subheader('📉 Dispersões e trade-off')
+fig1 = scatter_with_fit(summary_df['mean_load'], summary_df['energy_kWh_est'],
+                        'Carga efetiva média (0–1)', 'Energia estimada (kWh)', 'Energia × Carga')
+fig2 = scatter_with_fit(summary_df['active_hours'], summary_df['energy_kWh_est'],
+                        'Horas de uso (h)', 'Energia estimada (kWh)', 'Energia × Horas de uso')
+fig3 = scatter_with_fit(summary_df['active_hours'], summary_df['mean_load'],
+                        'Horas de uso (h)', 'Carga efetiva média (0–1)', 'Carga × Horas de uso')
 
-stat_tables = []
-for s in summaries:
-    if s['stats'] is None or s['stats'].empty:
-        continue
-    tbl = s['stats'].copy()
-    tbl.index.name = 'métrica'
-    tbl.reset_index(inplace=True)
-    tbl.insert(0, 'arquivo', s['arquivo'])
-    tbl.insert(1, 'host_id', s['host_id'])
-    tbl.insert(2, 'classificacao', s['classificacao'])
-    stat_tables.append(tbl)
-
-if stat_tables:
-    stats_all = pd.concat(stat_tables, ignore_index=True)
-    st.dataframe(stats_all, use_container_width=True)
-    to_downloadable_csv(stats_all, 'estatisticas_por_arquivo.csv', '⬇️ Baixar estatísticas por arquivo')
-else:
-    st.info('Sem estatísticas disponíveis para as colunas de percentual.')
+r1, r2 = st.columns(2)
+with r1:
+    st.plotly_chart(fig1, use_container_width=True)
+    st.plotly_chart(fig2, use_container_width=True)
+with r2:
+    st.plotly_chart(fig3, use_container_width=True)
 
 # -----------------------------
-# Correlação (apenas percentuais para evitar interpretação equivocada)
+# Séries temporais (opcional)
 # -----------------------------
 
-st.subheader('🔗 Correlação entre percentuais')
-if cols_pct:
-    corr = combined[cols_pct].corr()
-    st.plotly_chart(px.imshow(corr, text_auto=True, aspect='auto', title='Correlação'), use_container_width=True)
-else:
-    st.info('Não há colunas percentuais suficientes para correlação.')
+with st.expander('⏱️ Ver séries temporais (amostras)'):
+    combined = pd.concat([s['df'].assign(__file=s['arquivo']) for s in summaries], ignore_index=True)
+    if 'timestamp_utc' in combined.columns:
+        xcol = 'timestamp_utc'
+    else:
+        combined = combined.reset_index().rename(columns={'index':'amostra'})
+        xcol = 'amostra'
 
-# -----------------------------
-# Export do combinado (opcional)
-# -----------------------------
+    pct_cols = [c for c in ['cpu (%)','ram (%)','mem_available (%)','swap (%)'] if c in combined.columns]
+    if pct_cols:
+        st.plotly_chart(px.line(combined, x=xcol, y=pct_cols, color='__file', title='Percentuais'), use_container_width=True)
+    extra_cols = [c for c in ['load_effective','power_w_est','energy_kWh_cum'] if c in combined.columns]
+    if extra_cols:
+        st.plotly_chart(px.line(combined, x=xcol, y=extra_cols, color='__file', title='Carga/Consumo'), use_container_width=True)
 
-with st.expander('⬇️ Exportar dados combinados (CSV)'):
-    to_downloadable_csv(combined, 'dados_combinados.csv', 'Baixar CSV combinado')
-
-st.caption(f"© {dt.datetime.now().year} – Versão refatorada para o TCC")
+st.caption(f"© {dt.datetime.now().year} – Dashboard v2")
