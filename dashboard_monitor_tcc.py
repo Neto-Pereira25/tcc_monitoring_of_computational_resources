@@ -211,12 +211,19 @@ if all(c in combined.columns for c in cols_corr):
 
     fig_corr = px.imshow(
         corr,
-        text_auto='.3f',
-        color_continuous_scale='RdBu',  # CORRIGIDO: padrão científico
-        zmin=-1,                         # CORRIGIDO: escala fixa -1 a +1
+        color_continuous_scale='RdBu',
+        zmin=-1,
         zmax=1,
         title='Matriz de correlação (Pearson)',
     )
+    for i, row_label in enumerate(corr.index):
+        for j, col_label in enumerate(corr.columns):
+            fig_corr.add_annotation(
+                x=j, y=i,
+                text=f'{corr.loc[row_label, col_label]:.3f}',
+                showarrow=False,
+                font=dict(color='white', size=14, family='monospace'),
+            )
     fig_corr.update_layout(coloraxis_colorbar=dict(title='r'))
     st.plotly_chart(fig_corr, use_container_width=True, key='corr_heatmap')
 
