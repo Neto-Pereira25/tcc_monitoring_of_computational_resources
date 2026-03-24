@@ -101,12 +101,21 @@ if not selected:
     st.stop()
 
 # -----------------------------
-# Carregar dados
+# Carregar dados (CORRIGIDO: Filtra o "lixo" individualmente)
 # -----------------------------
-dfs = [load_csv(f).assign(__file=os.path.basename(f)) for f in selected]
+# Primeiro lemos e atribuímos o nome do arquivo
+dfs_brutos = [load_csv(f).assign(__file=os.path.basename(f)) for f in selected]
+
+# Agora filtramos cada DataFrame ANTES de eles entrarem na contagem do sumário
+dfs = []
+for df_temp in dfs_brutos:
+    if 'interval_s' in df_temp.columns:
+        # Mantém apenas leituras reais (> 10s), descartando os ruídos de 1s
+        df_temp = df_temp[df_temp['interval_s'] > 10]
+    dfs.append(df_temp)
+
+# O 'combined' agora já nasce com os dados limpos
 combined = pd.concat(dfs, ignore_index=True)
-if 'interval_s' in combined.columns:
-    combined = combined[combined['interval_s'] > 10]
 if 'timestamp_utc' in combined.columns:
     combined = combined.sort_values('timestamp_utc')
 
