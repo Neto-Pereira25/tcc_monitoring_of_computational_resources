@@ -199,7 +199,8 @@ def main():
             load_effective = clamp01(w_cpu*load_cpu + w_ram*load_ram + w_disk*load_disk)
 
             power_w = args.p_idle + (args.p_active - args.p_idle) * load_effective
-            dt_s = disk['interval_s']
+            real_dt = disk['interval_s']   # tempo real (diagnóstico)
+            dt_s = args.interval           # tempo fixo (cálculo correto)
             energy_Wh = power_w * (dt_s / 3600.0)
             energy_cum_Wh += energy_Wh
 
