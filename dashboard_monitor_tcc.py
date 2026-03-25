@@ -37,7 +37,12 @@ def load_csv(path: str) -> pd.DataFrame:
     if 'timestamp_utc' in df.columns:
         df['timestamp_utc'] = pd.to_datetime(df['timestamp_utc'], utc=True, errors='coerce')
         df = df.sort_values('timestamp_utc').reset_index(drop=True)
-    return df
+    # FILTRO AQUI
+    if 'real_interval_s' in df.columns:
+        df = df[df['real_interval_s'] > 10]
+    elif 'interval_s' in df.columns:
+        df = df[df['interval_s'] > 10]
+    return df.reset_index(drop=True)
 
 def list_csvs(root: str):
     if not os.path.isdir(root):
@@ -104,21 +109,11 @@ if not selected:
 # Carregar dados (CORRIGIDO: Filtra o "lixo" individualmente)
 # -----------------------------
 # Primeiro lemos e atribuímos o nome do arquivo
-dfs_brutos = [load_csv(f).assign(__file=os.path.basename(f)) for f in selected]
-
-# Agora filtramos cada DataFrame ANTES de eles entrarem na contagem do sumário
-dfs = []
-for df_temp in dfs_brutos:
-    if 'real_interval_s' in df_temp.columns:
-        df_temp = df_temp[df_temp['real_interval_s'] > 10]
-    elif 'interval_s' in df_temp.columns:
-        df_temp = df_temp[df_temp['interval_s'] > 10]
-
-    dfs.append(df_temp)
-# O 'combined' agora já nasce com os dados limpos
+dfs = [load_csv(f).assign(__file=os.path.basename(f)) for f in selected]
 combined = pd.concat(dfs, ignore_index=True)
 if 'timestamp_utc' in combined.columns:
     combined = combined.sort_values('timestamp_utc')
+
 
 # -----------------------------
 # AVISO DE AMOSTRA PEQUENA
