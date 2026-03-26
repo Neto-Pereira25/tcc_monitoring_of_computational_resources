@@ -126,6 +126,9 @@ def open_writer(path: str, fieldnames):
         w.writeheader()
     return f, w
 
+def get_csv_path(outdir, phase, host_id):
+    date_str = dt.datetime.now().strftime('%Y_%m_%d')
+    return os.path.join(outdir, f'{date_str}_{phase}_{host_id}.csv')
 # -----------------------------
 # Main
 # -----------------------------
@@ -158,9 +161,6 @@ def main():
     hostname = platform.node() or 'unknown-host'
     host_id = pseudonymize(hostname, args.salt)
 
-    date_str = dt.datetime.now().strftime('%Y_%m_%d')
-    csv_name = f'{date_str}_{args.phase}_{host_id}.csv'
-    csv_path = os.path.join(args.outdir, csv_name)
 
     disk_norm_Bps = max(args.disk_norm_mbps, 1e-6) * 1024 * 1024
     w_sum = args.w_cpu + args.w_ram + args.w_disk
@@ -177,8 +177,10 @@ def main():
         'active_flag',
         'power_w_est', 'energy_Wh_est', 'energy_kWh_cum'
     ]
+    
+    current_csv_path = get_csv_path(args.outdir, args.phase, host_id)
+    f, writer = open_writer(current_csv_path, fields)
 
-    f, writer = open_writer(csv_path, fields)
     snap = DiskSnapshot()
 
     t0 = time.time()
@@ -188,9 +190,17 @@ def main():
         while True:
             if args.duration > 0 and (time.time() - t0) >= args.duration:
                 break
+            
+            new_csv_path = get_csv_path(args.outdir, args.phase, host_id)
+            if new_csv_path != current_csv_path:
+                f.close()
+                current_csv_path = new_csv_path
+                f, writer = open_writer(current_csv_path, fields)
+                energy_cum_Wh = 0.0
+                print(f'[agente] Novo dia! Gravando em: {current_csv_path}')
 
             core = sample_cpu_mem()  # ~1s
-            disk = snap.delta()      # dt_s real
+            disk = snap.delta()
 
             load_cpu = clamp01(core['cpu (%)'] / 100.0)
             load_ram = clamp01(core['ram (%)'] / 100.0)
