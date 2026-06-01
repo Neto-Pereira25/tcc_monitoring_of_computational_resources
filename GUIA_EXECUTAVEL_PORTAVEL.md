@@ -80,13 +80,13 @@ Com PowerShell em modo Administrador:
 $taskName = "MonitorTCC_Agent"
 $exeTarget = "C:\MonitorTCC\agent_monitor_tcc.exe"
 
-$action = New-ScheduledTaskAction -Execute $exeTarget -Argument "--salt TCC2026 --outdir C:\MonitorTCC\data"
+$action = New-ScheduledTaskAction -Execute $exeTarget -Argument "--interval 300 --duration 0 --salt TCC2026 --outdir C:\MonitorTCC\data"
 $trigger = New-ScheduledTaskTrigger -AtStartup
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force
 Start-ScheduledTask -TaskName $taskName
 ```
 
-Este bloco cria a tarefa sem restricao de bateria, executa no boot e inicia imediatamente.
+Este bloco cria a tarefa sem restricao de bateria, executa no boot, inicia imediatamente e aplica retry no agendador (ate 3 reinicios, 1 minuto entre tentativas).
