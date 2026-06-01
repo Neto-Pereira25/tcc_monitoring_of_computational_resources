@@ -67,6 +67,11 @@ Resultado:
 
 - `dist\\agent_monitor_tcc.exe`
 
+Passo obrigatorio apos o build:
+
+1. Copie o executavel gerado em `dist\\agent_monitor_tcc.exe` para `C:\\MonitorTCC\\agent_monitor_tcc.exe`.
+2. Somente depois execute a configuracao da tarefa do passo 5.
+
 ## 5. Configurar para iniciar com o Windows (opcional)
 
 Com PowerShell em modo Administrador:
